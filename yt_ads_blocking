@@ -1,0 +1,105 @@
+#!/bin/bash
+
+library(ginstall)
+library(gfile)
+library(namespacefs)
+library(rglib)
+library(cfs)
+library(dremel)
+library(ggplot2)
+library(scales)
+library(directlabels)
+InitGoogle()
+options("scipen"=100, "digits"=12)
+
+myConn <- DremelConnect()
+DremelSetMinCompletionRatio(myConn, 1.0)
+DremelSetAccountingGroup(myConn,'urchin-processing-qa')
+DremelSetMaterializeOwnerGroup(myConn, 'materialize-a-dremel')
+DremelSetMaterializeOverwrite(myConn, TRUE)
+DremelSetIOTimeout(myConn, 7200)
+
+# Ad Blocking Rate.
+d <- DremelExecuteQuery("
+  SELECT
+    date,
+    country,
+    IF(is_gaia = true, 'SignedIn','NonSignedIn') AS Status,
+    # True positives (5+ pings in 5 day window):
+    (SUM(users_5dlck_pings_no_success_5day) -
+    SUM(users_5dlck_pings_no_success_with_ads_5day))
+      / SUM(users_5dlck_pings_5day) AS AdBlockRate
+  FROM zoom.dnskre31
+  WHERE date >= '2016-11-01'
+    AND cookie_creation_age IN ('10d', '360d', '5d', '90d', '15d', '180d',
+      '30d')
+    AND embeds_fraction IN ('0.00', '0.25', '0.50', '0.75')
+    AND experiment IN ('none')
+    AND country IN ('US', 'DE', 'JP', 'GB')
+    AND platform = 'Desktop'
+    AND interface = 'Web'
+  GROUP BY 1,2,3
+;", myConn)
+
+d$Status <- factor(d$Status, levels = c('SignedIn', 'NonSignedIn'))
+d[d == 0] <- NA
+d$date <- as.Date(d$date)
+pd <- position_dodge(.1)
+
+ggplot(data = d, aes(x = date, y = AdBlockRate, colour = country)) +
+facet_grid(Status ~.) +
+geom_line() +
+theme_bw() +
+theme(legend.position="right",
+legend.text = element_text(colour="gray26", size = 11, face = "bold"),
+legend.title=element_blank()) +
+theme(strip.text=element_text(size=11,face="bold")) +
+theme(axis.text.x=element_text(size=11,face="bold", angle = 45, hjust = 1)) +
+theme(axis.text.y=element_text(size=11,face="bold", color="gray26")) +
+stat_smooth(position=pd, method="loess", fullrange=TRUE, size=1.2, span=.4) +
+ylab("Ad Block Rate") +
+scale_y_continuous(labels = percent) +
+ggtitle("YT Desktop. Ad Block Rate") +
+theme(plot.title = element_text(lineheight=.8))+
+xlab("")
+
+# Ad Blocking Rate by Age.
+aa <- DremelExecuteQuery("
+  SELECT
+    user_age AS age,
+    country,
+    # True positives (5+ pings in 5 day window):
+    (SUM(users_5dlck_pings_no_success_5day) -
+    SUM(users_5dlck_pings_no_success_with_ads_5day))
+      / SUM(users_5dlck_pings_5day) AS AdBlockRate
+  FROM zoom.dns83m04
+  WHERE date >= '2017-01-01'
+    AND cookie_creation_age IN ('10d', '360d', '5d', '90d', '15d', '180d',
+      '30d')
+    AND embeds_fraction IN ('0.00', '0.25', '0.50', '0.75')
+    AND experiment IN ('none')
+    AND country IN ('US', 'DE')
+    AND platform = 'Desktop'
+    AND interface = 'Web'
+    AND user_age NOT IN ('Unknown','0 to 17')
+    AND user_gender != 'Unknown'
+  GROUP BY 1,2
+;", myConn)
+
+ggplot(aa, aes(age, y = AdBlockRate)) +
+geom_bar(stat="identity", width=.5, position = "dodge", aes(fill = country)) +
+theme_bw() +
+facet_grid(country ~ .) +
+geom_text(aes(label=sprintf("%1.1f%%", AdBlockRate*100)),vjust=+1.1,
+  size=6) +
+coord_cartesian(ylim = c(0, 0.52)) +
+theme(legend.position="none") +
+theme(strip.text=element_text(size=14,face="bold")) +
+theme(axis.text.x=element_text(size=14,face="bold", color="gray26")) +
+theme(axis.text.y=element_text(size=14,face="bold", color="gray26")) +
+theme(axis.ticks.y = element_blank()) +
+theme(axis.text.y = element_blank()) +
+theme(axis.line.y = element_blank()) +
+ylab("Ad Block Rate") + xlab("") +
+ggtitle("YT 2017. Desktop SignedIn. Ad Block Rate by Age.") +
+theme(plot.title = element_text(size = 14, face = "bold"))
