@@ -1,0 +1,70 @@
+#!/bin/bash
+
+library(ginstall)
+library(gfile)
+library(namespacefs)
+library(rglib)
+library(cfs)
+library(dremel)
+library(gbm)
+library(Hmisc)
+library(ggplot2)
+library(lubridate)
+InitGoogle()
+options("scipen"=100, "digits"=6)
+
+myConn <- DremelConnect()
+DremelSetMinCompletionRatio(myConn, 1.0)
+DremelSetAccountingGroup(myConn,'urchin-processing-qa')
+DremelSetMaterializeOwnerGroup(myConn, 'materialize-a-dremel')
+DremelSetMaterializeOverwrite(myConn, TRUE)
+DremelSetIOTimeout(myConn, 7200)
+
+# Sessions in UC Browser by countries.
+d <- DremelExecuteQuery("
+  SELECT
+    a.country AS country,
+    a.month AS month,
+    uc_sessions / mob_sessions AS share
+  FROM
+    (SELECT
+        country,
+        STRFTIME_UTC_USEC(STRING(_PARTITION_DATE),'%Y%m') AS month,
+        SUM(sessions) as mob_sessions
+    FROM growth_analysis_data.sessions.sources.all
+    WHERE device_type = 'Mobile'
+      AND country IN ('India','Indonesia','Pakistan','Bangladesh','United States',
+        'Vietnam','UAE','Malaysia')
+      AND STRFTIME_UTC_USEC(STRING(_PARTITION_DATE),'%Y%m') IN ('201609','201702')
+    GROUP@50 BY 1,2) a
+  JOIN@50
+    (SELECT
+        country,
+        STRFTIME_UTC_USEC(STRING(_PARTITION_DATE),'%Y%m') AS month,
+        SUM(sessions) as uc_sessions
+    FROM growth_analysis_data.sessions.sources.all
+    WHERE device_type = 'Mobile'
+      AND browser IN ('UCBrowser','UCBrowserMini','UCBrowserHD',
+        'UCBrowserMiniSpeedMode','UCBrowserSpeedMode')
+      AND country IN ('India','Indonesia','Pakistan','Bangladesh','United States',
+        'Vietnam','UAE','Malaysia')
+      AND STRFTIME_UTC_USEC(STRING(_PARTITION_DATE),'%Y%m') IN ('201609','201702')
+    GROUP@50 BY 1,2) b
+  ON a.country = b.country AND a.month = b.month
+;", myConn)
+
+d$country <- factor(d$country, levels = c('United States', 'Vietnam','UAE',
+    'Malaysia','Pakistan','Bangladesh','Indonesia','India'))
+
+ggplot(d , aes(x = country, y = share)) +
+geom_bar(stat="identity", width=.8, position = "dodge", aes(fill = month)) +
+geom_line() +
+theme_bw() +
+coord_flip() +
+scale_y_continuous(labels = percent) +
+ggtitle("UC Browser Sessions % of Mobile Sessions.") +
+theme(legend.position = 'right') +
+theme(strip.text=element_text(size=11,face="bold")) +
+theme(axis.text.x=element_text(size=11,face="bold", color="gray26")) +
+theme(axis.text.y=element_text(size=11,face="bold", color="gray26")) +
+ylab("") + xlab("")
