@@ -1,0 +1,154 @@
+#!/bin/bash
+
+library(ginstall)
+library(gfile)
+library(namespacefs)
+library(rglib)
+library(cfs)
+library(dremel)
+library(ggplot2)
+library(scales)
+library(directlabels)
+library(lubridate)
+library(Hmisc)
+library(nlme)
+library(lme4)
+library(data.table)
+InitGoogle()
+options("scipen"=100, "digits"=4)
+
+myConn <- DremelConnect()
+DremelSetMinCompletionRatio(myConn, 1.0)
+DremelSetAccountingGroup(myConn,'urchin-processing-qa')
+DremelSetMaterializeOwnerGroup(myConn, 'materialize-a-dremel')
+DremelSetMaterializeOverwrite(myConn, TRUE)
+DremelSetIOTimeout(myConn, 7200)
+
+# YT by product spend.
+yt <- DremelExecuteQuery("
+  SELECT
+    pro.division_id AS division_id,
+    product_group,
+    prod_revenue,
+    total_revenue,
+    prod_revenue / total_revenue AS share_revenue,
+  FROM
+    (SELECT
+      company_rollup.division_id AS division_id,
+      CASE
+        WHEN product IN
+          ('DBM AdX Display', 'DBM AdX Non-YT Display', 'DBM Non-Google Display',
+          'DBM AdX Non-YT Video', 'DBM Non-YT Video',
+          'DBM Non-Google Video', 'DBM AdX Video')
+        THEN 'DBM'
+        WHEN product IN
+          ('GDN Apps Display', 'GDN Awareness', 'GDN Display', 'GDN GOO DART',
+          'GDN GVN Display', 'GDN GVN Lightbox Display', 'GDN GVN Viewable Display',
+          'GDN Lightbox Display', 'GDN Unmigrated Admob Display', 'GDN Viewable Display',
+          'GDN AwBid Display', 'YouTube Display', 'YouTube Lightbox Display',
+          'YouTube Viewable Display', 'GDN Apps Instream Video', 'GDN Apps Video',
+          'GDN GVN InDisplay Video', 'GDN GVN Instream Video', 'GDN GVN Video',
+          'GDN InDisplay Video', 'GDN Instream Video', 'GDN Video', 'GDN AwBid Video')
+        THEN 'GDN'
+        WHEN product IN
+          ('Gmail Message Ads AWFE', 'Gmail Message Ads Crush')
+        THEN 'Gmail'
+        WHEN product IN
+         ('AFS', 'ComputerTablet Google.com', 'ComputerTablet Google.com PLA',
+        'ComputerTablet Hotel Price Ads', 'Mobile Google.com',
+        'Mobile Google.com PLA', 'Mobile Hotel Price Ads')
+        THEN 'Search'
+        WHEN product IN
+         ('YouTube InDisplay Video', 'YouTube Instream Video', 'YouTube Video',
+        'YouTube MastHead Video', 'DBM AdX YouTube Video',
+        'DBM AdX YouTube Display', 'DBM YouTube Video',
+        'DBM Reserve YouTube Video')
+        THEN 'YouTube'
+      END AS product_group,
+      SUM(delivered_revenue.revenue_usd_quarterly_fx) AS prod_revenue
+    FROM XP_DailyCurrentStats_F
+    WHERE billing_category = 'Billable'
+      AND product_google_business = 'Advertising'
+      AND service_channel = 'SBS'
+      AND product IN
+        (
+        'DBM AdX Display', 'DBM AdX Non-YT Display', 'DBM Non-Google Display',
+        'DBM AdX YouTube Display', 'DBM AdX Non-YT Video', 'DBM Non-YT Video',
+        'DBM Non-Google Video', 'GDN AwBid Video', 'DBM AdX YouTube Video',
+        'DBM YouTube Video', 'DBM AdX Video', 'DBM Reserve YouTube Video',
+        'GDN Apps Display', 'GDN Awareness', 'GDN Display', 'GDN GOO DART',
+        'GDN GVN Display', 'GDN GVN Lightbox Display', 'GDN GVN Viewable Display',
+        'GDN Lightbox Display', 'GDN Unmigrated Admob Display', 'GDN Viewable Display',
+        'GDN AwBid Display', 'YouTube Display', 'YouTube Lightbox Display',
+        'YouTube Viewable Display', 'GDN Apps Instream Video', 'GDN Apps Video',
+        'GDN GVN InDisplay Video', 'GDN GVN Instream Video', 'GDN GVN Video',
+        'GDN InDisplay Video', 'GDN Instream Video', 'GDN Video',
+        'Gmail Message Ads AWFE', 'Gmail Message Ads Crush',
+        'AFS', 'ComputerTablet Google.com', 'ComputerTablet Google.com PLA',
+        'ComputerTablet Hotel Price Ads', 'Mobile Google.com',
+        'Mobile Google.com PLA', 'Mobile Hotel Price Ads',
+        'YouTube InDisplay Video', 'YouTube Instream Video', 'YouTube Video',
+        'YouTube MastHead Video'
+        )
+      AND date_id > INT64(FLOOR((DATE_ADD(NOW(), -31, 'DAY')
+      - parse_time_usec('2000-01-01')) / 3600 / 24/ 1000000))
+    GROUP@50 BY 1,2) pro
+  JOIN@50
+    (SELECT
+      company_rollup.division_id AS division_id,
+      SUM(delivered_revenue.revenue_usd_quarterly_fx) AS total_revenue
+    FROM XP_DailyCurrentStats_F
+    WHERE billing_category = 'Billable'
+      AND product_google_business = 'Advertising'
+      AND service_channel = 'SBS'
+      AND product IN
+        (
+        'DBM AdX Display', 'DBM AdX Non-YT Display', 'DBM Non-Google Display',
+        'DBM AdX YouTube Display', 'DBM AdX Non-YT Video', 'DBM Non-YT Video',
+        'DBM Non-Google Video', 'GDN AwBid Video', 'DBM AdX YouTube Video',
+        'DBM YouTube Video', 'DBM AdX Video', 'DBM Reserve YouTube Video',
+        'GDN Apps Display', 'GDN Awareness', 'GDN Display', 'GDN GOO DART',
+        'GDN GVN Display', 'GDN GVN Lightbox Display', 'GDN GVN Viewable Display',
+        'GDN Lightbox Display', 'GDN Unmigrated Admob Display', 'GDN Viewable Display',
+        'GDN AwBid Display', 'YouTube Display', 'YouTube Lightbox Display',
+        'YouTube Viewable Display', 'GDN Apps Instream Video', 'GDN Apps Video',
+        'GDN GVN InDisplay Video', 'GDN GVN Instream Video', 'GDN GVN Video',
+        'GDN InDisplay Video', 'GDN Instream Video', 'GDN Video',
+        'Gmail Message Ads AWFE', 'Gmail Message Ads Crush',
+        'AFS', 'ComputerTablet Google.com', 'ComputerTablet Google.com PLA',
+        'ComputerTablet Hotel Price Ads', 'Mobile Google.com',
+        'Mobile Google.com PLA', 'Mobile Hotel Price Ads',
+        'YouTube InDisplay Video', 'YouTube Instream Video', 'YouTube Video',
+        'YouTube MastHead Video'
+        )
+      AND date_id > INT64(FLOOR((DATE_ADD(NOW(), -31, 'DAY')
+      - parse_time_usec('2000-01-01')) / 3600 / 24/ 1000000))
+    GROUP@50 BY 1) tot
+  ON pro.division_id = tot.division_id
+;", myConn)
+
+rhg_cols <- c("#771C19","#AA3929","#E25033","#F27314","#F8A31B","#E2C59F",
+  "#B6C5CC","#8E9CA3","#556670","#000000")
+
+yt <- na.omit(yt)
+medians <- ddply(yt, .(product_group), summarise, med = median(share_revenue))
+yt$product_group <- factor(yt$product_group, levels= c("Search","GDN",
+  "YouTube","Gmail","DBM"))
+
+dodge <- position_dodge(width = 0.4)
+ggplot(yt, aes(x=product_group, y=share_revenue, fill=product_group)) +
+geom_boxplot(outlier.shape = NA) +
+scale_y_continuous(labels =  percent) +
+coord_cartesian(ylim = c(0, 1.1)) +
+coord_flip()  +
+scale_fill_manual(values = rhg_cols) +
+theme(strip.text=element_text(size=11,face="bold")) +
+theme(axis.text.x=element_text(size=11,face="bold", color="gray26")) +
+theme(axis.text.y=element_text(size=11,face="bold", color="gray26")) +
+geom_text(data = medians, aes(x = product_group, y = med,
+  label=sprintf("%1.2f%%", med*100)), size = 5, hjust = -.01, vjust = +2,
+  color='white') +
+theme(legend.position="none") +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+ggtitle("Products' Share of Total Revenue. SBS") +
+ylab("Revenue Share Distiribution") + xlab("Product")
